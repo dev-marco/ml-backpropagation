@@ -1,21 +1,57 @@
 #!/usr/bin/env python3
 
 import numpy as np
-import sys
 import argparse
+import tempfile
 
+try:
+    import matplotlib.pyplot as plt
+except:
+    plt = None
+
+
+def to_pgm (img, expect):
+    digit = np.argmax(expect)
+    pixels = iter(img)
+
+    with tempfile.NamedTemporaryFile('w', prefix = '{0}_'.format(digit), suffix = '.pgm', dir = '.', delete = False) as file:
+        print('P2', file = file)
+        print('28 28', file = file)
+        print('255', file = file)
+
+        for _ in range(28):
+            for _ in range(28):
+                print('{0}'.format(255 - int(next(pixels) * 255)), end = ' ', file = file)
+            print(file = file)
+
+        return file.name
+
+def read_csv (fname):
+    data = []
+    digits = np.asmatrix(np.eye(10))
+
+    with open(fname, 'r') as file:
+        for line in file:
+            img = map(int, line.split(','))
+            expect = np.zeros(10)
+            digit = next(img)
+
+            data.append((
+                np.asmatrix(np.fromiter(img, np.float) / 255.0).T,
+                digits[ : , digit]
+            ))
+
+    return data
 
 def sigm (x):
-    return 1.0 / (1.0 + np.exp(-x))
+    with np.errstate(over = 'ignore'):
+        return 1.0 / (1.0 + np.exp(-x))
 
 def dsigm (x):
     return np.multiply(x, (1.0 - x))
 
 def dcost (expect, predict):
-    # d/dw -y log(f(w)) - (1 - y)(log(1 - f(w)))
     return predict - expect
-    # d/dw -y log(sigmoid(w x)) - (1 - y)(log(1 - sigmoid(w x)))
-    # return inputs * (1.0 - expect - predict)
 
 def execute (inp, weights):
     result = []
@@ -47,135 +83,149 @@ def delta (inp, grad, out):
     return result
 
 def cost (data, weights):
-    accum = None
+    accum = 0
 
     for inp, expect in data:
         predict = execute(inp, weights)[-1]
 
-        inp_cost = np.nan_to_num(-(
-            np.multiply(expect, np.log(predict)) +
-            np.multiply((1 - expect), np.log(1 - predict))
-        )).sum()
+        psum = predict.sum()
 
-        if accum is None:
-            accum = inp_cost
-        else:
-            accum += inp_cost
+        if psum > 0:
+            predict = predict / psum
+
+        zero = np.asarray(expect == 0.0).reshape(-1)
+        one = ~zero
+
+        with np.errstate(divide = 'ignore'):
+            predict[zero] = np.nan_to_num(np.log(1 - predict[zero]))
+            predict[one] = np.multiply(expect[one], np.log(predict[one]))
+
+        accum -= predict.sum()
 
     return accum / len(data)
 
 def error (data, weights):
-    result = 0
+    count = 0
 
     for inp, expect in data:
 
         if np.argmax(expect) != np.argmax(execute(inp, weights)[-1]):
-            result += 1
+            count += 1
 
-    return result / len(data)
-
-
-ratio = 0.1
-momentum = 0.0001
-batch_size = 1
-generations = 500
-min_error = 0.5
-fold = 10
+    return count / len(data)
 
 argparser = argparse.ArgumentParser()
 
-argparser.add_argument('-ratio', type = float, default = 0.1)
+argparser.add_argument('input', type = str)
+argparser.add_argument('-ratio', type = float, default = 1)
+argparser.add_argument('-momentum', type = float, default = 0.0001)
+argparser.add_argument('-batch', type = int, default = np.inf)
+argparser.add_argument('-generations', type = int, default = np.inf)
+argparser.add_argument('-stop', type = float, default = -np.inf)
+argparser.add_argument('-hidden', type = int, default = 100)
+argparser.add_argument('-validate', type = str, default = False)
+argparser.add_argument('-save', type = str, default = False)
+argparser.add_argument('-no-dump', action = 'store_false', dest = 'dump')
+argparser.add_argument('-plot', type = str, default = False)
 
-nodes = [ 784, 100, 10 ]
+args = argparser.parse_args()
 
-data = []
+train = read_csv(args.input)
+validate = read_csv(args.validate) if args.validate else train
 
-digits = np.asmatrix(np.eye(10))
-
-with open(sys.argv[1], 'r') as file:
-    for line in file:
-        img = map(int, line.split(','))
-        expect = np.zeros(10)
-        digit = next(img)
-
-        data.append((
-            np.asmatrix(np.fromiter(img, np.float) / 255.0).T,
-            digits[ : , digit]
-        ))
+nodes = [ 784, args.hidden, 10 ]
 
 weights = [
     np.asmatrix(np.random.randn(nf + 1, nt))
         for nf, nt in zip(nodes[ : -1 ], nodes[ 1 : ])
 ]
 
-errors = []
-costs = []
+train_errors = []
+validate_errors = []
 
-fold = min(fold, len(data))
-fold_size = int(len(data) / fold)
+i = 0
+old = weights
 
-if __name__ == '__main__':
+try:
+    while i < args.generations:
+        i += 1
 
-    old = weights
+        train_error = error(train, weights)
+        validate_error = (
+            error(validate, weights)
+                if args.validate else
+            train_error
+        )
 
-    try:
-        for i in range(generations):
+        if validate_error <= args.stop:
+            break
 
-            gen_error = error(data, weights)
-            gen_cost = np.linalg.norm(cost(data, weights))
+        train_cost = np.linalg.norm(cost(train, weights))
+        validate_cost = (
+            np.linalg.norm(cost(validate, weights))
+                if args.validate else
+            train_cost
+        )
 
-            errors.append(gen_error)
-            costs.append(gen_cost)
+        if args.validate:
+            validate_errors.append(validate_error)
 
-            if not (i % max(generations / 50, 1)):
-                print('generation {0}, error = {1}, cost = {2}'.format(i, gen_error, gen_cost))
+        train_errors.append(train_error)
 
-            batch = 0
-            accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
+        if args.dump:
+            print('generation {0}, validate err = {1:.5f}, train err = {2:.5f}, cost = {3:.5f}'.format(
+                i, validate_error, train_error, validate_cost
+            ))
 
-            np.random.shuffle(data)
-            testing = data[ : fold_size ]
+        batch = 0
+        accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
 
-            for j, (inp, expect) in enumerate(testing):
-                out = execute(inp, weights)
-                grads = gradients(expect, out, weights)
+        np.random.shuffle(train)
 
-                accum = np.add(accum, delta(inp, grads, out))
+        for j, (inp, expect) in enumerate(train):
+            out = execute(inp, weights)
+            grads = gradients(expect, out, weights)
 
-                batch += 1
+            accum = np.add(accum, delta(inp, grads, out))
 
-                if batch == batch_size or (j + 1) == len(testing):
+            batch += 1
 
-                    new_weights = np.add(weights, np.subtract(
-                        np.multiply(momentum, old),
-                        np.multiply(ratio, np.divide(accum, batch))
-                    ))
+            if batch == args.batch or (j + 1) == len(train):
 
-                    old = weights
-                    weights = new_weights
+                new_weights = np.add(weights, np.subtract(
+                    np.multiply(args.momentum, old),
+                    np.multiply(args.ratio, np.divide(accum, batch))
+                ))
 
-                    batch = 0
-                    accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
+                old = weights
+                weights = new_weights
 
-    except KeyboardInterrupt:
-        print()
-        pass
+                batch = 0
+                accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
 
-    print(error(data, weights))
+except KeyboardInterrupt:
+    print()
+    pass
 
-    # inp, expect = validation[np.random.randint(0, len(validation))]
-    #
-    # with open('output.pgm', 'w') as img:
-    #     print('P2', file = img)
-    #     print('28 28', file = img)
-    #     print('255', file = img)
-    #
-    #     pixels = iter(inp)
-    #
-    #     for i in range(28):
-    #         for j in range(28):
-    #             print('{0}'.format(int(255 * (1.0 - float(next(pixels))))), end = ' ', file = img)
-    #         print(file = img)
-    #
-    # print(execute(inp, weights)[-1])
-    # print(expect)
+if plt and args.plot:
+    y_axis = np.arange(1, len(train_errors) + 1, dtype = np.uint)
+
+    plt.plot(y_axis, train_errors, 'r-', label = 'Train')
+
+    if args.validate:
+        plt.plot(y_axis, validate_errors, 'b-', label = 'Validation')
+        plt.legend()
+
+    plt.xlabel('Generation')
+    plt.ylabel('Error')
+
+    plt.savefig(args.plot, dpi = 300, transparent = True)
+
+if args.save:
+    with open(args.save, 'w') as file:
+        print(' '.join(map(str, train_errors)), file = file)
+
+        if args.validate:
+            print(' '.join(map(str, validate_errors)), file = file)
+
+print('done')
