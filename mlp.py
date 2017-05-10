@@ -2,6 +2,7 @@
 
 import numpy as np
 import sys
+import argparse
 
 
 def sigm (x):
@@ -9,13 +10,6 @@ def sigm (x):
 
 def dsigm (x):
     return np.multiply(x, (1.0 - x))
-
-def cost (expect, predict):
-    return np.nan_to_num(-np.multiply(expect, np.log(predict)) - np.multiply((1 - expect), np.log(1 - predict))).sum()
-    # return -(
-    #     np.multiply(expect, np.log(predict + np.finfo(np.float64).tiny)) +
-    #     np.multiply(1.0 - expect, np.log(1.0 - predict + np.finfo(np.float64).tiny))
-    # )
 
 def dcost (expect, predict):
     # d/dw -y log(f(w)) - (1 - y)(log(1 - f(w)))
@@ -52,39 +46,51 @@ def delta (inp, grad, out):
 
     return result
 
-def costs (data, weights):
+def cost (data, weights):
     accum = None
 
     for inp, expect in data:
+        predict = execute(inp, weights)[-1]
+
+        inp_cost = np.nan_to_num(-(
+            np.multiply(expect, np.log(predict)) +
+            np.multiply((1 - expect), np.log(1 - predict))
+        )).sum()
+
         if accum is None:
-            accum = cost(expect, execute(inp, weights)[-1])
+            accum = inp_cost
         else:
-            accum += cost(expect, execute(inp, weights)[-1])
+            accum += inp_cost
 
     return accum / len(data)
 
 def error (data, weights):
-    errors = 0
+    result = 0
 
     for inp, expect in data:
 
         if np.argmax(expect) != np.argmax(execute(inp, weights)[-1]):
-            errors += 1
+            result += 1
 
-    return errors / len(data)
+    return result / len(data)
 
 
 ratio = 0.1
 momentum = 0.0001
-batch_size = 10
-generations = 30
+batch_size = 1
+generations = 500
+min_error = 0.5
+fold = 10
+
+argparser = argparse.ArgumentParser()
+
+argparser.add_argument('-ratio', type = float, default = 0.1)
 
 nodes = [ 784, 100, 10 ]
 
 data = []
-digits = {}
 
-digit_vectors = np.asmatrix(np.eye(10))
+digits = np.asmatrix(np.eye(10))
 
 with open(sys.argv[1], 'r') as file:
     for line in file:
@@ -92,19 +98,21 @@ with open(sys.argv[1], 'r') as file:
         expect = np.zeros(10)
         digit = next(img)
 
-        pixels = np.asmatrix(np.fromiter(img, np.float) / 255.0).T
-
-        train = ( pixels, digit_vectors[ : , digit] )
-
-        data.append(train)
-        digits.get(digit, []).append(pixels)
+        data.append((
+            np.asmatrix(np.fromiter(img, np.float) / 255.0).T,
+            digits[ : , digit]
+        ))
 
 weights = [
     np.asmatrix(np.random.randn(nf + 1, nt))
         for nf, nt in zip(nodes[ : -1 ], nodes[ 1 : ])
 ]
 
-test_size = int(len(data) * 0.95)
+errors = []
+costs = []
+
+fold = min(fold, len(data))
+fold_size = int(len(data) / fold)
 
 if __name__ == '__main__':
 
@@ -113,14 +121,20 @@ if __name__ == '__main__':
     try:
         for i in range(generations):
 
+            gen_error = error(data, weights)
+            gen_cost = np.linalg.norm(cost(data, weights))
+
+            errors.append(gen_error)
+            costs.append(gen_cost)
+
             if not (i % max(generations / 50, 1)):
-                print('generation {0}, error = {1}'.format(i, error(data, weights)))
+                print('generation {0}, error = {1}, cost = {2}'.format(i, gen_error, gen_cost))
 
             batch = 0
             accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
 
             np.random.shuffle(data)
-            testing = data[ : test_size ]
+            testing = data[ : fold_size ]
 
             for j, (inp, expect) in enumerate(testing):
                 out = execute(inp, weights)
