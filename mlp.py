@@ -3,6 +3,7 @@
 import numpy as np
 import argparse
 import tempfile
+import os
 
 try:
     import matplotlib.pyplot as plt
@@ -117,36 +118,68 @@ def error (data, weights):
 argparser = argparse.ArgumentParser()
 
 argparser.add_argument('input', type = str)
-argparser.add_argument('-ratio', type = float, default = 1)
 argparser.add_argument('-momentum', type = float, default = 0.0001)
-argparser.add_argument('-batch', type = int, default = np.inf)
-argparser.add_argument('-generations', type = int, default = np.inf)
+argparser.add_argument('-ratio', type = float, default = [], nargs = '*')
+argparser.add_argument('-batch', type = float, default = [], nargs = '*')
+argparser.add_argument('-hidden', type = int, default = [], nargs = '*')
+argparser.add_argument('-generations', type = float, default = np.inf)
 argparser.add_argument('-stop', type = float, default = -np.inf)
-argparser.add_argument('-hidden', type = int, default = 100)
 argparser.add_argument('-validate', type = str, default = False)
 argparser.add_argument('-save', type = str, default = False)
 argparser.add_argument('-no-dump', action = 'store_false', dest = 'dump')
 argparser.add_argument('-plot', type = str, default = False)
+argparser.add_argument('-threads', type = int, default = 1)
+
+argparser.add_argument('-fix-ratio', type = float, default = 0.1)
+argparser.add_argument('-fix-batch', type = float, default = 10.0)
+argparser.add_argument('-fix-hidden', type = int, default = 100)
 
 args = argparser.parse_args()
 
+params = [
+    ( args.ratio or [ args.fix_ratio ], args.fix_ratio ),
+    ( args.batch or [ args.fix_batch ], args.fix_batch ),
+    ( args.hidden or [ args.fix_hidden ], args.fix_hidden )
+]
+
+experiments = []
+
+if all(map(lambda x: len(x[0]) == 1, params)):
+    experiments.append(tuple(p[0][0] for p in params))
+else:
+    for i, p in enumerate(params):
+        for v in p[0]:
+            experiments.append(
+                tuple(v if j == i else fix[1] for j, fix in enumerate(params))
+            )
+
+unique = set()
+experiments = [ e for e in experiments if not (e in unique or unique.add(e)) ]
+
+print('reading files')
 train = read_csv(args.input)
 validate = read_csv(args.validate) if args.validate else train
 
-nodes = [ 784, args.hidden, 10 ]
+print('{0} train instances'.format(len(train)))
 
-weights = [
-    np.asmatrix(np.random.randn(nf + 1, nt))
-        for nf, nt in zip(nodes[ : -1 ], nodes[ 1 : ])
-]
+if args.validate:
+    print('{0} validation instances'.format(len(validate)))
 
-train_errors = []
-validate_errors = []
+for ratio, batch, hidden in experiments:
 
-i = 0
-old = weights
+    print('\nratio = {0}, batch = {1}, hidden = {2}'.format(ratio, batch, hidden))
 
-try:
+    train_errors = []
+    validate_errors = []
+
+    nodes = ( 784, hidden, 10 )
+
+    old = weights = [
+        np.asmatrix(np.random.randn(nf + 1, nt))
+            for nf, nt in zip(nodes[ : -1 ], nodes[ 1 : ])
+    ]
+
+    i = 0
     while i < args.generations:
         i += 1
 
@@ -173,11 +206,11 @@ try:
         train_errors.append(train_error)
 
         if args.dump:
-            print('generation {0}, validate err = {1:.5f}, train err = {2:.5f}, cost = {3:.5f}'.format(
+            print('generation {0}, validation = {1:.5f}, train = {2:.5f}, cost = {3:.5f}'.format(
                 i, validate_error, train_error, validate_cost
             ))
 
-        batch = 0
+        batch_size = 0
         accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
 
         np.random.shuffle(train)
@@ -188,44 +221,48 @@ try:
 
             accum = np.add(accum, delta(inp, grads, out))
 
-            batch += 1
+            batch_size += 1
 
-            if batch == args.batch or (j + 1) == len(train):
+            if batch_size == batch or (j + 1) == len(train):
 
                 new_weights = np.add(weights, np.subtract(
                     np.multiply(args.momentum, old),
-                    np.multiply(args.ratio, np.divide(accum, batch))
+                    np.multiply(ratio, np.divide(accum, batch_size))
                 ))
 
                 old = weights
                 weights = new_weights
 
-                batch = 0
+                batch_size = 0
                 accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
 
-except KeyboardInterrupt:
-    print()
-    pass
+    if plt and args.plot:
+        y_axis = np.arange(1, len(train_errors) + 1, dtype = np.uint)
 
-if plt and args.plot:
-    y_axis = np.arange(1, len(train_errors) + 1, dtype = np.uint)
-
-    plt.plot(y_axis, train_errors, 'r-', label = 'Train')
-
-    if args.validate:
-        plt.plot(y_axis, validate_errors, 'b-', label = 'Validation')
-        plt.legend()
-
-    plt.xlabel('Generation')
-    plt.ylabel('Error')
-
-    plt.savefig(args.plot, dpi = 300, transparent = True)
-
-if args.save:
-    with open(args.save, 'w') as file:
-        print(' '.join(map(str, train_errors)), file = file)
+        plt.plot(y_axis, train_errors, 'r-', label = 'Train')
 
         if args.validate:
-            print(' '.join(map(str, validate_errors)), file = file)
+            plt.plot(y_axis, validate_errors, 'b-', label = 'Validation')
+            plt.legend()
 
-print('done')
+        plt.xlabel('Generation')
+        plt.ylabel('Error')
+
+        fname = os.path.join(
+            args.plot, '{0}-{1}-{2}.pdf'.format(ratio, batch, hidden)
+        )
+
+        plt.savefig(fname, dpi = 300, transparent = True)
+
+    if args.save:
+        fname = os.path.join(
+            args.save, '{0}-{1}-{2}.txt'.format(ratio, batch, hidden)
+        )
+
+        with open(fname, 'w') as file:
+            print(' '.join(map(str, train_errors)), file = file)
+
+            if args.validate:
+                print(' '.join(map(str, validate_errors)), file = file)
+
+print('\ndone')
