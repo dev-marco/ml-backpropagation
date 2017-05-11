@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 
-import numpy as np
+import os
+import time
+import signal
 import argparse
 import tempfile
-import os
-
-try:
-    import matplotlib.pyplot as plt
-except:
-    plt = None
+import multiprocessing
+import itertools as it
+import numpy as np
 
 
 def to_pgm (img, expect):
@@ -97,11 +96,11 @@ def cost (data, weights):
         zero = np.asarray(expect == 0.0).reshape(-1)
         one = ~zero
 
-        with np.errstate(divide = 'ignore'):
+        with np.errstate(divide = 'ignore', over = 'ignore'):
             predict[zero] = np.nan_to_num(np.log(1 - predict[zero]))
             predict[one] = np.multiply(expect[one], np.log(predict[one]))
 
-        accum -= predict.sum()
+            accum -= predict.sum()
 
     return accum / len(data)
 
@@ -115,59 +114,27 @@ def error (data, weights):
 
     return count / len(data)
 
-argparser = argparse.ArgumentParser()
+mlp_globals = {}
 
-argparser.add_argument('input', type = str)
-argparser.add_argument('-momentum', type = float, default = 0.0001)
-argparser.add_argument('-ratio', type = float, default = [], nargs = '*')
-argparser.add_argument('-batch', type = float, default = [], nargs = '*')
-argparser.add_argument('-hidden', type = int, default = [], nargs = '*')
-argparser.add_argument('-generations', type = float, default = np.inf)
-argparser.add_argument('-stop', type = float, default = -np.inf)
-argparser.add_argument('-validate', type = str, default = False)
-argparser.add_argument('-save', type = str, default = False)
-argparser.add_argument('-no-dump', action = 'store_false', dest = 'dump')
-argparser.add_argument('-plot', type = str, default = False)
-argparser.add_argument('-threads', type = int, default = 1)
+def mlp (data):
+    ( ratio, batch, hidden ), pos, size = data
 
-argparser.add_argument('-fix-ratio', type = float, default = 0.1)
-argparser.add_argument('-fix-batch', type = float, default = 10.0)
-argparser.add_argument('-fix-hidden', type = int, default = 100)
+    lock = mlp_globals['lock']
+    train = mlp_globals['train']
+    validate = mlp_globals['validate']
+    args = mlp_globals['args']
 
-args = argparser.parse_args()
+    if batch != np.inf:
+        batch = int(batch)
 
-params = [
-    ( args.ratio or [ args.fix_ratio ], args.fix_ratio ),
-    ( args.batch or [ args.fix_batch ], args.fix_batch ),
-    ( args.hidden or [ args.fix_hidden ], args.fix_hidden )
-]
+    if args.generations != np.inf:
+        generations = int(args.generations)
 
-experiments = []
-
-if all(map(lambda x: len(x[0]) == 1, params)):
-    experiments.append(tuple(p[0][0] for p in params))
-else:
-    for i, p in enumerate(params):
-        for v in p[0]:
-            experiments.append(
-                tuple(v if j == i else fix[1] for j, fix in enumerate(params))
-            )
-
-unique = set()
-experiments = [ e for e in experiments if not (e in unique or unique.add(e)) ]
-
-print('reading files')
-train = read_csv(args.input)
-validate = read_csv(args.validate) if args.validate else train
-
-print('{0} train instances'.format(len(train)))
-
-if args.validate:
-    print('{0} validation instances'.format(len(validate)))
-
-for ratio, batch, hidden in experiments:
-
-    print('\nratio = {0}, batch = {1}, hidden = {2}'.format(ratio, batch, hidden))
+    if args.dump:
+        with lock:
+            print('( ratio = {}, batch = {}, hidden = {}, pos = {} / {} ): STARTING'.format(
+                ratio, batch, hidden, pos + 1, size
+            ), flush = True)
 
     train_errors = []
     validate_errors = []
@@ -179,10 +146,12 @@ for ratio, batch, hidden in experiments:
             for nf, nt in zip(nodes[ : -1 ], nodes[ 1 : ])
     ]
 
+    start_time = time.time()
+    gen = 0
+
     try:
-        i = 0
-        while i < args.generations:
-            i += 1
+        while gen < generations:
+            gen += 1
 
             train_error = error(train, weights)
             validate_error = (
@@ -207,9 +176,14 @@ for ratio, batch, hidden in experiments:
             train_errors.append(train_error)
 
             if args.dump:
-                print('generation {0}, validation = {1:.5f}, train = {2:.5f}, cost = {3:.5f}'.format(
-                    i, validate_error, train_error, validate_cost
-                ))
+                with lock:
+                    print('( ratio = {}, batch = {}, hidden = {}, pos = {} / {} ): ITERATION\n  '
+                          'gen {} / {} verr = {:.5f} terr = {:.5f} '
+                          'vcost = {:.5f} tcost = {:.5f}'.format(
+                        ratio, batch, hidden, pos + 1, size,
+                        gen, generations, validate_error, train_error,
+                        validate_cost, train_cost
+                    ), flush = True)
 
             batch_size = 0
             accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
@@ -238,27 +212,9 @@ for ratio, batch, hidden in experiments:
                     accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
 
     except KeyboardInterrupt:
-        print()
+        pass
 
-    if plt and args.plot:
-        y_axis = np.arange(1, len(train_errors) + 1, dtype = np.uint)
-
-        plt.plot(y_axis, train_errors, 'r-', label = 'Train')
-
-        if args.validate:
-            plt.plot(y_axis, validate_errors, 'b-', label = 'Validation')
-            plt.legend()
-
-        plt.xlabel('Generation')
-        plt.ylabel('Error')
-
-        fname = os.path.join(
-            args.plot, '{0}-{1}-{2}.pdf'.format(ratio, batch, hidden)
-        )
-
-        plt.savefig(fname, dpi = 300, transparent = True)
-
-    if args.save:
+    if args.save and train_errors:
         fname = os.path.join(
             args.save, '{0}-{1}-{2}.txt'.format(ratio, batch, hidden)
         )
@@ -269,4 +225,73 @@ for ratio, batch, hidden in experiments:
             if args.validate:
                 print(' '.join(map(str, validate_errors)), file = file)
 
-print('\ndone')
+    if args.dump:
+        with lock:
+            print('( ratio = {}, batch = {}, hidden = {}, pos = {} / {} ): ENDING\n  '
+                  'time = {:.5f}s generations = {}'.format(
+                ratio, batch, hidden, pos + 1, size,
+                time.time() - start_time, gen
+            ), flush = True)
+
+argparser = argparse.ArgumentParser()
+
+argparser.add_argument('input', type = str)
+argparser.add_argument('-momentum', type = float, default = 0.0001)
+argparser.add_argument('-ratio', type = float, default = [], nargs = '*')
+argparser.add_argument('-batch', type = float, default = [], nargs = '*')
+argparser.add_argument('-hidden', type = int, default = [], nargs = '*')
+argparser.add_argument('-generations', type = float, default = np.inf)
+argparser.add_argument('-stop', type = float, default = -np.inf)
+argparser.add_argument('-validate', type = str, default = False)
+argparser.add_argument('-save', type = str, default = False)
+argparser.add_argument('-no-dump', action = 'store_false', dest = 'dump')
+argparser.add_argument('-threads', type = int, default = multiprocessing.cpu_count())
+
+argparser.add_argument('-default-ratio', type = float, default = 0.1)
+argparser.add_argument('-default-batch', type = float, default = 10.0)
+argparser.add_argument('-default-hidden', type = int, default = 100)
+
+args = argparser.parse_args()
+
+params = [
+    args.ratio or [ args.default_ratio ],
+    args.batch or [ args.default_batch ],
+    args.hidden or [ args.default_hidden ]
+]
+
+experiments = []
+
+if all(map(lambda x: len(x) == 1, params)):
+    experiments.append(tuple(p[0] for p in params))
+else:
+    experiments.extend(it.product(*params))
+
+print('reading files', flush = True)
+train = validate = read_csv(args.input)
+print('{0} train instances'.format(len(train)), flush = True)
+
+if args.validate:
+    validate = read_csv(args.validate)
+    print('{0} validation instances'.format(len(validate)), flush = True)
+
+mlp_globals = {
+    'args': args,
+    'train': train,
+    'validate': validate,
+    'lock': multiprocessing.Lock()
+}
+
+unique = set()
+experiments = [ e for e in experiments if not (e in unique or unique.add(e)) ]
+
+pool = multiprocessing.Pool(args.threads)
+asyn = pool.map_async(mlp, (
+    ( e, pos, len(experiments) )
+        for pos, e in enumerate(experiments)
+), 1)
+
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+asyn.wait()
+
+print('\ndone', flush = True)
