@@ -179,62 +179,66 @@ for ratio, batch, hidden in experiments:
             for nf, nt in zip(nodes[ : -1 ], nodes[ 1 : ])
     ]
 
-    i = 0
-    while i < args.generations:
-        i += 1
+    try:
+        i = 0
+        while i < args.generations:
+            i += 1
 
-        train_error = error(train, weights)
-        validate_error = (
-            error(validate, weights)
-                if args.validate else
-            train_error
-        )
+            train_error = error(train, weights)
+            validate_error = (
+                error(validate, weights)
+                    if args.validate else
+                train_error
+            )
 
-        if validate_error <= args.stop:
-            break
+            if validate_error <= args.stop:
+                break
 
-        train_cost = np.linalg.norm(cost(train, weights))
-        validate_cost = (
-            np.linalg.norm(cost(validate, weights))
-                if args.validate else
-            train_cost
-        )
+            train_cost = np.linalg.norm(cost(train, weights))
+            validate_cost = (
+                np.linalg.norm(cost(validate, weights))
+                    if args.validate else
+                train_cost
+            )
 
-        if args.validate:
-            validate_errors.append(validate_error)
+            if args.validate:
+                validate_errors.append(validate_error)
 
-        train_errors.append(train_error)
+            train_errors.append(train_error)
 
-        if args.dump:
-            print('generation {0}, validation = {1:.5f}, train = {2:.5f}, cost = {3:.5f}'.format(
-                i, validate_error, train_error, validate_cost
-            ))
-
-        batch_size = 0
-        accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
-
-        np.random.shuffle(train)
-
-        for j, (inp, expect) in enumerate(train):
-            out = execute(inp, weights)
-            grads = gradients(expect, out, weights)
-
-            accum = np.add(accum, delta(inp, grads, out))
-
-            batch_size += 1
-
-            if batch_size == batch or (j + 1) == len(train):
-
-                new_weights = np.add(weights, np.subtract(
-                    np.multiply(args.momentum, old),
-                    np.multiply(ratio, np.divide(accum, batch_size))
+            if args.dump:
+                print('generation {0}, validation = {1:.5f}, train = {2:.5f}, cost = {3:.5f}'.format(
+                    i, validate_error, train_error, validate_cost
                 ))
 
-                old = weights
-                weights = new_weights
+            batch_size = 0
+            accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
 
-                batch_size = 0
-                accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
+            np.random.shuffle(train)
+
+            for j, (inp, expect) in enumerate(train):
+                out = execute(inp, weights)
+                grads = gradients(expect, out, weights)
+
+                accum = np.add(accum, delta(inp, grads, out))
+
+                batch_size += 1
+
+                if batch_size == batch or (j + 1) == len(train):
+
+                    new_weights = np.add(weights, np.subtract(
+                        np.multiply(args.momentum, old),
+                        np.multiply(ratio, np.divide(accum, batch_size))
+                    ))
+
+                    old = weights
+                    weights = new_weights
+
+                    batch_size = 0
+                    accum = [ np.zeros(w.shape, w.dtype) for w in weights ]
+
+    except KeyboardInterrupt:
+        print()
 
     if plt and args.plot:
         y_axis = np.arange(1, len(train_errors) + 1, dtype = np.uint)
