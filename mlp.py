@@ -253,19 +253,6 @@ argparser.add_argument('-default-hidden', type = int, default = 100)
 
 args = argparser.parse_args()
 
-params = [
-    args.ratio or [ args.default_ratio ],
-    args.batch or [ args.default_batch ],
-    args.hidden or [ args.default_hidden ]
-]
-
-experiments = []
-
-if all(map(lambda x: len(x) == 1, params)):
-    experiments.append(tuple(p[0] for p in params))
-else:
-    experiments.extend(it.product(*params))
-
 print('reading files', flush = True)
 train = validate = read_csv(args.input)
 print('{0} train instances'.format(len(train)), flush = True)
@@ -281,8 +268,11 @@ mlp_globals = {
     'lock': multiprocessing.Lock()
 }
 
-unique = set()
-experiments = [ e for e in experiments if not (e in unique or unique.add(e)) ]
+experiments = list(it.product(*(
+    args.ratio or [ args.default_ratio ],
+    args.batch or [ args.default_batch ],
+    args.hidden or [ args.default_hidden ]
+)))
 
 pool = multiprocessing.Pool(args.threads)
 asyn = pool.map_async(mlp, (
