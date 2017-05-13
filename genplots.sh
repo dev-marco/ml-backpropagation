@@ -50,16 +50,20 @@ function short_name {
   fi
 }
 
+mkdir -p charts/var3
+
 for batch in ${batch_sizes}; do
   for ratio in ${ratios}; do
     for hidden in ${hidden_units}; do
       labels=$(big_name ${batch})$'\nLearning Rate = '${ratio}$'\nHidden Units = '${hidden}
 
       ./plot.py experiments/${ratio}-${batch}-${hidden}.txt \
-        -labels "${labels}" -validate -folder charts/validations -title-size 10
+        -labels "${labels}" -validate -folder charts/var3 -title-size 10
     done
   done
 done
+
+mkdir -p charts/var2/batch
 
 for batch in ${batch_sizes}; do
   files=()
@@ -72,8 +76,10 @@ for batch in ${batch_sizes}; do
     done
   done
 
-  ./plot.py "${files[@]}" -labels "${labels[@]}" -folder charts -title "$(big_name ${batch})" -legend-size 6
+  ./plot.py "${files[@]}" -labels "${labels[@]}" -folder charts/var2/batch -title "$(big_name ${batch})" -legend-size 6
 done
+
+mkdir -p charts/var2/ratio
 
 for ratio in ${ratios}; do
   files=()
@@ -86,8 +92,10 @@ for ratio in ${ratios}; do
     done
   done
 
-  ./plot.py "${files[@]}" -labels "${labels[@]}" -folder charts -title "Ratio = ${ratio}" -legend-size 6
+  ./plot.py "${files[@]}" -labels "${labels[@]}" -folder charts/var2/ratio -title "Ratio = ${ratio}" -legend-size 6
 done
+
+mkdir -p charts/var2/hidden
 
 for hidden in ${hidden_units}; do
   files=()
@@ -100,66 +108,42 @@ for hidden in ${hidden_units}; do
     done
   done
 
-  ./plot.py "${files[@]}" -labels "${labels[@]}" -folder charts -title "Hidden Units = ${hidden}" -legend-size 6
+  ./plot.py "${files[@]}" -labels "${labels[@]}" -folder charts/var2/hidden -title "Hidden Units = ${hidden}" -legend-size 6
 done
 
-exit
-
-fixed_ratio=0.5
-fixed_batch=10
-fixed_hidden=100
-
 echo 'hidden'
-mkdir -p charts/hidden
+mkdir -p charts/var1/hidden
 
-title=$'Hidden Units variation\n$_{(Learning\ Rate = '"${fixed_ratio}"', '"$(big_name ${fixed_batch})"')}$'
+for batch in ${batch_sizes}; do
+  for ratio in ${ratios}; do
+    title=$'Hidden Units variation\n$_{('"$(big_name ${batch})"', Learning\ Rate = '"${ratio}"')}$'
 
-./plot.py experiments/${fixed_ratio}-${fixed_batch}-{25,50,100}.txt -labels '25' '50' '100' \
-  -folder charts -title "${title}"
-
-labels=(
-  $'25 Hidden Units\n$_{('"$(big_name ${fixed_batch} latex)"', Learning\ Rate = '"${fixed_ratio}"')}$'
-  $'50 Hidden Units\n$_{('"$(big_name ${fixed_batch} latex)"', Learning\ Rate = '"${fixed_ratio}"')}$'
-  $'100 Hidden Units\n$_{('"$(big_name ${fixed_batch} latex)"', Learning\ Rate = '"${fixed_ratio}"')}$'
-)
-
-./plot.py experiments/${fixed_ratio}-${fixed_batch}-{25,50,100}.txt \
-  -labels "${labels[@]}" -validate -folder charts
-
+    ./plot.py experiments/${ratio}-${batch}-{25,50,100}.txt -labels '25' '50' '100' \
+      -folder charts/var1/hidden -title "${title}"
+  done
+done
 
 echo 'ratio'
-mkdir -p charts/ratio
+mkdir -p charts/var1/ratio
 
-title=$'Learning Rate variation\n$_{('"$(big_name ${fixed_batch} latex)"', Hidden\ Units = '"${fixed_hidden}"')}$'
+for batch in ${batch_sizes}; do
+  for hidden in ${hidden_units}; do
+    title=$'Learning Rate variation\n$_{('"$(big_name ${batch} latex)"', Hidden\ Units = '"${hidden}"')}$'
 
-./plot.py experiments/{0.5,1.0,10.0}-${fixed_batch}-${fixed_hidden}.txt -labels '0.5' '1.0' '10.0' \
-  -folder charts -title "${title}"
-
-labels=(
-  $'Learning Rate = 0.5\n$_{('"$(big_name ${fixed_batch} latex)"', Hidden\ Units = '"${fixed_hidden}"')}$'
-  $'Learning Rate = 1.0\n$_{('"$(big_name ${fixed_batch} latex)"', Hidden\ Units = '"${fixed_hidden}"')}$'
-  $'Learning Rate = 10.0\n$_{('"$(big_name ${fixed_batch} latex)"', Hidden\ Units = '"${fixed_hidden}"')}$'
-)
-
-./plot.py experiments/{0.5,1.0,10.0}-${fixed_batch}-${fixed_hidden}.txt \
-  -labels "${labels[@]}" -validate -folder charts
-
+    ./plot.py experiments/{0.5,1.0,10.0}-${batch}-${hidden}.txt -labels '0.5' '1.0' '10.0' \
+      -folder charts/var1/ratio -title "${title}"
+  done
+done
 
 echo 'batch'
-mkdir -p charts/batch
+mkdir -p charts/var1/batch
 
-title=$'Batch Size variation\n$_{(Learning\ Rate = '"${fixed_ratio}"', Hidden\ Units = '"${fixed_hidden}"')}$'
+for ratio in ${ratios}; do
+  for hidden in ${hidden_units}; do
+    title=$'Batch Size variation\n$_{(Learning\ Rate = '"${ratio}"', Hidden\ Units = '"${hidden}"')}$'
 
-./plot.py experiments/${fixed_ratio}-{1,10,50,inf}-${fixed_hidden}.txt \
-  -labels $(short_name_only 1) $(short_name_only 10) $(short_name_only 50) $(short_name_only inf) \
-  -folder charts -title "${title}"
-
-labels=(
-  "$(big_name_only 1)"$'\n$_{(Learning\ Rate = '"${fixed_ratio}"', Hidden\ Units = '"${fixed_hidden}"')}$'
-  "$(big_name_only 10)"$'\n$_{(Learning\ Rate = '"${fixed_ratio}"', Hidden\ Units = '"${fixed_hidden}"')}$'
-  "$(big_name_only 50)"$'\n$_{(Learning\ Rate = '"${fixed_ratio}"', Hidden\ Units = '"${fixed_hidden}"')}$'
-  "$(big_name_only inf)"$'\n$_{(Learning\ Rate = '"${fixed_ratio}"', Hidden\ Units = '"${fixed_hidden}"')}$'
-)
-
-./plot.py experiments/${fixed_ratio}-{1,10,50,inf}-${fixed_hidden}.txt \
-  -labels "${labels[@]}" -validate -folder charts
+    ./plot.py experiments/${ratio}-{1,10,50,inf}-${hidden}.txt \
+      -labels "$(short_name 1)" "$(short_name 10)" "$(short_name 50)" "$(short_name inf)" \
+      -folder charts/var1/batch -title "${title}"
+  done
+done
