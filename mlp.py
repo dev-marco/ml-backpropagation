@@ -127,8 +127,7 @@ def mlp (data):
     if batch != np.inf:
         batch = int(batch)
 
-    if args.generations != np.inf:
-        generations = int(args.generations)
+    generations = args.generations if args.generations == np.inf else int(args.generations)
 
     if args.dump:
         with lock:
@@ -141,16 +140,46 @@ def mlp (data):
 
     nodes = ( 784, hidden, 10 )
 
-    old = weights = [
-        np.asmatrix(np.random.randn(nf + 1, nt))
-            for nf, nt in zip(nodes[ : -1 ], nodes[ 1 : ])
-    ]
+    old = weights = None
+    gen = 0
+
+    if args.load:
+        fname = os.path.join(
+            args.load, '{0}-{1}-{2}-weights.txt'.format(ratio, batch, hidden)
+        )
+
+        if os.path.isfile(fname):
+            with open(fname, 'r') as file:
+                gen = int(next(file))
+                size = int(next(file))
+
+                weights = [ None ] * size
+                old = [ None ] * size
+
+                for i in range(size):
+                    rows, cols = map(int, next(file).strip().split())
+                    dtype = next(file).strip()
+
+                    weights[i] = np.asmatrix(
+                        np.fromiter(map(float, next(file).strip().split()), dtype)
+                    ).reshape(rows, cols)
+
+
+                    old[i] = np.asmatrix(
+                        np.fromiter(map(float, next(file).strip().split()), dtype)
+                    ).reshape(rows, cols)
+
+    if weights is None:
+        old = weights = [
+            np.asmatrix(np.random.randn(nf + 1, nt))
+                for nf, nt in zip(nodes[ : -1 ], nodes[ 1 : ])
+        ]
 
     start_time = time.time()
-    gen = 0
 
     try:
         while gen < generations:
+
             gen += 1
 
             train_error = error(train, weights)
@@ -214,9 +243,9 @@ def mlp (data):
     except KeyboardInterrupt:
         pass
 
-    if args.save and train_errors:
+    if train_errors:
         fname = os.path.join(
-            args.save, '{0}-{1}-{2}.txt'.format(ratio, batch, hidden)
+            args.output, '{}-{}-{}.txt'.format(ratio, batch, hidden)
         )
 
         with open(fname, 'w') as file:
@@ -224,6 +253,21 @@ def mlp (data):
 
             if args.validate:
                 print(' '.join(map(str, validate_errors)), file = file)
+
+        if args.save:
+            fname = os.path.join(
+                args.save, '{}-{}-{}-weights.txt'.format(ratio, batch, hidden)
+            )
+
+            with open(fname, 'w') as file:
+                print(gen, file = file)
+                print(len(weights), file = file)
+
+                for w, o in zip(weights, old):
+                    print('{} {}'.format(w.shape[0], w.shape[1]), file = file)
+                    print('{}'.format(w.dtype.char), file = file)
+                    print(' '.join(map(str, np.ravel(w))), file = file)
+                    print(' '.join(map(str, np.ravel(o))), file = file)
 
     if args.dump:
         with lock:
@@ -236,20 +280,18 @@ def mlp (data):
 argparser = argparse.ArgumentParser()
 
 argparser.add_argument('input', type = str)
+argparser.add_argument('output', type = str)
 argparser.add_argument('-momentum', type = float, default = 0.0001)
-argparser.add_argument('-ratio', type = float, default = [], nargs = '*')
-argparser.add_argument('-batch', type = float, default = [], nargs = '*')
-argparser.add_argument('-hidden', type = int, default = [], nargs = '*')
+argparser.add_argument('-ratio', type = float, default = [ 0.1 ], nargs = '*')
+argparser.add_argument('-batch', type = float, default = [ 10.0 ], nargs = '*')
+argparser.add_argument('-hidden', type = int, default = [ 100 ], nargs = '*')
 argparser.add_argument('-generations', type = float, default = np.inf)
 argparser.add_argument('-stop', type = float, default = -np.inf)
 argparser.add_argument('-validate', type = str, default = False)
 argparser.add_argument('-save', type = str, default = False)
+argparser.add_argument('-load', type = str, default = False)
 argparser.add_argument('-no-dump', action = 'store_false', dest = 'dump')
 argparser.add_argument('-threads', type = int, default = multiprocessing.cpu_count())
-
-argparser.add_argument('-default-ratio', type = float, default = 0.1)
-argparser.add_argument('-default-batch', type = float, default = 10.0)
-argparser.add_argument('-default-hidden', type = int, default = 100)
 
 args = argparser.parse_args()
 
@@ -268,20 +310,21 @@ mlp_globals = {
     'lock': multiprocessing.Lock()
 }
 
-experiments = list(it.product(*(
-    args.ratio or [ args.default_ratio ],
-    args.batch or [ args.default_batch ],
-    args.hidden or [ args.default_hidden ]
-)))
+experiments = list(it.product(*( args.ratio, args.batch, args.hidden )))
 
-pool = multiprocessing.Pool(args.threads)
+pool = multiprocessing.Pool(min(args.threads, len(experiments)))
 asyn = pool.map_async(mlp, (
     ( e, pos, len(experiments) )
         for pos, e in enumerate(experiments)
 ), 1)
 
-signal.signal(signal.SIGINT, signal.SIG_IGN)
+sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 asyn.wait()
+
+signal.signal(signal.SIGINT, sigint)
+
+pool.close()
+pool.join()
 
 print('\ndone', flush = True)
