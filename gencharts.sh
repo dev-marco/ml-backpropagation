@@ -6,7 +6,7 @@ function contains {
   local word
   for word in "${@:2}"; do
     if [ "${word}" = "${1}" ]; then
-      return word
+      return 0
     fi
   done
   return 1
