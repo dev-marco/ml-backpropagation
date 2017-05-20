@@ -2,6 +2,8 @@ ratios='0.5 1.0 10.0'
 batch_sizes='1 10 50 inf'
 hidden_units='25 50 100'
 
+lang="br"
+
 function contains {
   local word
   for word in "${@:2}"; do
@@ -10,6 +12,14 @@ function contains {
     fi
   done
   return 1
+}
+
+function variation {
+  if [ "${lang}" = "br" ]; then
+    echo "Variação de ${@}"
+  else
+    echo "${@} variation"
+  fi
 }
 
 function big_name_only {
@@ -28,24 +38,44 @@ function big_name_only {
       fi
     elif [[ "${2}" = "10" || "${2}" = "50" ]]; then
       if contains "latex" "${@}"; then
-        echo "Mini\ Batch"
+        echo "Mini‑Batch"
       else
-        echo "Mini Batch"
+        echo "Mini-Batch"
       fi
     else
-      echo "Gradient Type"
+      if [ "${lang}" = "br" ]; then
+        echo "Descida no Gradiente"
+      else
+        echo "Gradient Type"
+      fi
     fi
   elif [ "${1}" = "ratio" ]; then
     if contains "latex" "${@}"; then
-      echo "Learning\ Rate"
+      if [ "${lang}" = "br" ]; then
+        echo "Taxa\ de\ Aprendizado"
+      else
+        echo "Learning\ Rate"
+      fi
     else
-      echo "Learning Rate"
+      if [ "${lang}" = "br" ]; then
+        echo "Taxa de Aprendizado"
+      else
+        echo "Learning Rate"
+      fi
     fi
   elif [ "${1}" = "hidden" ]; then
     if contains "latex" "${@}"; then
-      echo "Hidden\ Units"
+      if [ "${lang}" = "br" ]; then
+        echo "Neurônios\ na\ Camada\ Oculta"
+      else
+        echo "Hidden\ Units"
+      fi
     else
-      echo "Hidden Units"
+      if [ "${lang}" = "br" ]; then
+        echo "Neurônios na Camada Oculta"
+      else
+        echo "Hidden Units"
+      fi
     fi
   fi
 
@@ -69,9 +99,17 @@ function short_name_only {
       echo "MB"
     fi
   elif [ "${1}" = "ratio" ]; then
-    echo "LR"
+    if [ "${lang}" = "br" ]; then
+      echo "TA"
+    else
+      echo "LR"
+    fi
   elif [ "${1}" = "hidden" ]; then
-    echo "HU"
+    if [ "${lang}" = "br" ]; then
+      echo "CO"
+    else
+      echo "HU"
+    fi
   fi
 }
 
@@ -90,38 +128,53 @@ if [ "${1}" != "" ]; then
   mkdir -p ${folder}
 fi
 
-echo var3
-mkdir -p ${folder}/var3
+echo var1
+
+echo ratio
+mkdir -p ${folder}/var1/ratio
 
 for batch in ${batch_sizes}; do
-  for ratio in ${ratios}; do
-    for hidden in ${hidden_units}; do
-      labels=$(big_name batch ${batch})$'\n'$(big_name ratio ${ratio})$'\n'$(big_name hidden ${hidden})
+  for hidden in ${hidden_units}; do
+    title="$(variation "$(big_name_only ratio)")"$'\n$_{('"$(big_name batch ${batch} latex), $(big_name hidden ${hidden} latex))}$"
 
-      ./plot.py experiments/${ratio}-${batch}-${hidden}.txt \
-        -labels "${labels}" -validate -folder ${folder}/var3 -title-size 10
-    done
+    if ! ./plot.py experiments/{0.5,1.0,10.0}-${batch}-${hidden}.txt -labels '0.5' '1.0' '10.0' \
+      -folder ${folder}/var1/ratio -title "${title}" -lang "${lang}"; then
+      exit 1
+    fi
   done
 done
-
-echo var2
 
 echo batch
-mkdir -p ${folder}/var2/batch
+mkdir -p ${folder}/var1/batch
+
+for ratio in ${ratios}; do
+  for hidden in ${hidden_units}; do
+    title="$(variation "$(big_name_only batch)")"$'\n$_{('"$(big_name ratio ${ratio} latex), $(big_name hidden ${hidden} latex))}$"
+
+    if ! ./plot.py experiments/${ratio}-{1,10,50,inf}-${hidden}.txt \
+      -labels "$(short_name batch 1)" "$(short_name batch 10)" "$(short_name batch 50)" "$(short_name batch inf)" \
+      -folder ${folder}/var1/batch -title "${title}" -lang "${lang}"; then
+      exit 1
+    fi
+  done
+done
+
+echo hidden
+mkdir -p ${folder}/var1/hidden
 
 for batch in ${batch_sizes}; do
-  files=()
-  labels=()
-
   for ratio in ${ratios}; do
-    for hidden in ${hidden_units}; do
-      files+=("experiments/${ratio}-${batch}-${hidden}.txt")
-      labels+=("$(short_name ratio ${ratio}), $(short_name hidden ${hidden})")
-    done
-  done
+    title="$(variation "$(big_name_only hidden)")"$'\n$_{('"$(big_name ratio ${ratio} latex), $(big_name batch ${batch} latex))}$"
 
-  ./plot.py "${files[@]}" -labels "${labels[@]}" -folder ${folder}/var2/batch -title "$(big_name batch ${batch})" -legend-size 6
+    if ! ./plot.py experiments/${ratio}-${batch}-{25,50,100}.txt -labels '25' '50' '100' \
+      -folder ${folder}/var1/hidden -title "${title}" -lang "${lang}"; then
+      exit 1
+    fi
+  done
 done
+
+echo
+echo var2
 
 echo ratio
 mkdir -p ${folder}/var2/ratio
@@ -137,7 +190,30 @@ for ratio in ${ratios}; do
     done
   done
 
-  ./plot.py "${files[@]}" -labels "${labels[@]}" -folder ${folder}/var2/ratio -title "$(big_name ratio ${ratio})" -legend-size 6
+  if ! ./plot.py "${files[@]}" -labels "${labels[@]}" -folder ${folder}/var2/ratio \
+    -title "$(big_name ratio ${ratio})" -lang "${lang}"; then
+    exit 1
+  fi
+done
+
+echo batch
+mkdir -p ${folder}/var2/batch
+
+for batch in ${batch_sizes}; do
+  files=()
+  labels=()
+
+  for ratio in ${ratios}; do
+    for hidden in ${hidden_units}; do
+      files+=("experiments/${ratio}-${batch}-${hidden}.txt")
+      labels+=("$(short_name ratio ${ratio}), $(short_name hidden ${hidden})")
+    done
+  done
+
+  if ! ./plot.py "${files[@]}" -labels "${labels[@]}" -folder ${folder}/var2/batch \
+    -title "$(big_name batch ${batch})" -lang "${lang}"; then
+    exit 1
+  fi
 done
 
 echo hidden
@@ -150,48 +226,33 @@ for hidden in ${hidden_units}; do
   for batch in ${batch_sizes}; do
     for ratio in ${ratios}; do
       files+=("experiments/${ratio}-${batch}-${hidden}.txt")
-      labels+=("$(short_name batch ${batch}), $(short_name ratio ${ratio})")
+      labels+=("$(short_name ratio ${ratio}), $(short_name batch ${batch})")
     done
   done
 
-  ./plot.py "${files[@]}" -labels "${labels[@]}" -folder ${folder}/var2/hidden -title "$(big_name hidden ${hidden})" -legend-size 6
+  if ! ./plot.py "${files[@]}" -labels "${labels[@]}" -folder ${folder}/var2/hidden \
+    -title "$(big_name hidden ${hidden})" -lang "${lang}"; then
+    exit 1
+  fi
 done
 
-echo var1
-
-echo hidden
-mkdir -p ${folder}/var1/hidden
-
-for batch in ${batch_sizes}; do
-  for ratio in ${ratios}; do
-    title="$(big_name_only hidden)"$' variation\n$_{('"$(big_name batch ${batch} latex), $(big_name ratio ${ratio} latex))}$"
-
-    ./plot.py experiments/${ratio}-${batch}-{25,50,100}.txt -labels '25' '50' '100' \
-      -folder ${folder}/var1/hidden -title "${title}"
-  done
-done
-
-echo ratio
-mkdir -p ${folder}/var1/ratio
-
-for batch in ${batch_sizes}; do
-  for hidden in ${hidden_units}; do
-    title="$(big_name_only ratio)"$' variation\n$_{('"$(big_name batch ${batch} latex), $(big_name hidden ${hidden} latex))}$"
-
-    ./plot.py experiments/{0.5,1.0,10.0}-${batch}-${hidden}.txt -labels '0.5' '1.0' '10.0' \
-      -folder ${folder}/var1/ratio -title "${title}"
-  done
-done
-
-echo batch
-mkdir -p ${folder}/var1/batch
+echo
+echo var3
+mkdir -p ${folder}/var3
 
 for ratio in ${ratios}; do
-  for hidden in ${hidden_units}; do
-    title="$(big_name_only batch)"$' variation\n$_{('"$(big_name ratio ${ratio} latex), $(big_name hidden ${hidden} latex))}$"
+  echo ${ratio}
+  for batch in ${batch_sizes}; do
+    echo ' '${batch}
+    for hidden in ${hidden_units}; do
+      echo '  '${hidden}
+      labels=$(big_name ratio ${ratio})$'\n'$(big_name batch ${batch})$'\n'$(big_name hidden ${hidden})
 
-    ./plot.py experiments/${ratio}-{1,10,50,inf}-${hidden}.txt \
-      -labels "$(short_name batch 1)" "$(short_name batch 10)" "$(short_name batch 50)" "$(short_name batch inf)" \
-      -folder ${folder}/var1/batch -title "${title}"
+      if ! ./plot.py experiments/${ratio}-${batch}-${hidden}.txt \
+        -labels "${labels}" -validate -folder ${folder}/var3 \
+        -title-size 10 -lang "${lang}"; then
+        exit 1
+      fi
+    done
   done
 done
