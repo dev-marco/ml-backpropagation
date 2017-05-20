@@ -108,7 +108,6 @@ def error (data, weights):
     count = 0
 
     for inp, expect in data:
-
         if np.argmax(expect) != np.argmax(execute(inp, weights)[-1]):
             count += 1
 
@@ -189,8 +188,10 @@ def mlp (data):
                 train_error
             )
 
-            if validate_error <= args.stop:
-                break
+            if args.validate:
+                validate_errors.append(validate_error)
+
+            train_errors.append(train_error)
 
             train_cost = np.linalg.norm(cost(train, weights))
             validate_cost = (
@@ -199,10 +200,8 @@ def mlp (data):
                 train_cost
             )
 
-            if args.validate:
-                validate_errors.append(validate_error)
-
-            train_errors.append(train_error)
+            if train_error <= args.stop:
+                break
 
             if args.dump:
                 with lock:
@@ -243,6 +242,8 @@ def mlp (data):
     except KeyboardInterrupt:
         pass
 
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     if train_errors:
         fname = os.path.join(
             args.output, '{}-{}-{}.txt'.format(ratio, batch, hidden)
@@ -282,7 +283,7 @@ argparser = argparse.ArgumentParser()
 argparser.add_argument('input', type = str)
 argparser.add_argument('output', type = str)
 argparser.add_argument('-momentum', type = float, default = 0.0001)
-argparser.add_argument('-ratio', type = float, default = [ 0.1 ], nargs = '*')
+argparser.add_argument('-ratio', type = float, default = [ 0.5 ], nargs = '*')
 argparser.add_argument('-batch', type = float, default = [ 10.0 ], nargs = '*')
 argparser.add_argument('-hidden', type = int, default = [ 100 ], nargs = '*')
 argparser.add_argument('-generations', type = float, default = np.inf)
@@ -310,7 +311,11 @@ mlp_globals = {
     'lock': multiprocessing.Lock()
 }
 
-experiments = list(it.product(*( args.ratio, args.batch, args.hidden )))
+unique = set()
+experiments = [
+    e for e in it.product(*( args.ratio, args.batch, args.hidden ))
+        if not (e in unique or unique.add(e))
+]
 
 pool = multiprocessing.Pool(min(args.threads, len(experiments)))
 asyn = pool.map_async(mlp, (
